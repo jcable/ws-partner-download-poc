@@ -2,12 +2,10 @@
 var http = require('http');
 var https = require('https');
 var AWS = require("aws-sdk");
+var secrets = require("secret");
 
 var dynamodb = new AWS.DynamoDB();
 var docClient = new AWS.DynamoDB.DocumentClient();
-
-var cert = "";
-var key = "";
 
 function getConfig() {
     return docClient.scan({TableName: 'ws-partner-download-poc-config'}).promise();
@@ -32,8 +30,8 @@ function putGenres(genres) {
 
 function pipsrequest(version) {
     var options = {
-        key:   key,  // Secret client key
-        cert:  cert,  // Public client key
+        key:   secrets.key,  // Secret client key
+        cert:  secrets.cert,  // Public client key
         rejectUnauthorized: false, // Used for self signed server
         host: "api.live.bbc.co.uk",
         path: "/pips/api/v1/version/pid."+version+"/media_assets/?format=json"
@@ -67,13 +65,13 @@ function pipsrequest(version) {
 }
 
 function nitrorequest(params) {
-    var qs = "pid:"+params.pid;
+    var qs = "pid="+params.pid;
     if(params.hasOwnProperty("pulse_reference")) {
         qs += "&pulse_reference="+params.pulse_reference // TODO - use the pulse reference
     }
     var options = {
         host: "nitro.api.bbci.co.uk",
-        path: "/nitro/api/programmes?api_key="+api_key+"&mixin=available_versions&mixin=images&mixin=ancestor_titles&mixin=genre_groupings&"+qs,
+        path: "/nitro/api/programmes?api_key="+secrets.api_key+"&mixin=available_versions&mixin=images&mixin=ancestor_titles&mixin=genre_groupings&"+qs,
         headers: {
             accept: 'application/json'
         }
@@ -118,7 +116,8 @@ exports.handler = (event, context, callback) => {
     var promises = [];
     // get a promise for the nitro query for every changed pid
     for(var i=0; i<event.Records.length; i++) {
-        var m = event.Records[i].Sns.Message;
+        var ms = event.Records[i].Sns.Message;
+        var m = JSON.parse(ms);
         if(m.type == 'episode') {
             promises.push(nitrorequest(m.query_string));
         }
@@ -129,7 +128,6 @@ exports.handler = (event, context, callback) => {
         for(var i=0; i<data.Count; i++) {
           var item = data.Items[i];
           if(item.key == "master_brands") {
-              config["master_brand_properties"] = item.value;
               config["master_brands"] = Object.keys(item.value);
           }
           if(item.key == "genres") {
@@ -147,9 +145,20 @@ exports.handler = (event, context, callback) => {
         for(var i=0; i<values.length; i++) {
             var episode = values[i];
             // for each new availability check if it is associated with one of our master brands
-            if(config.master_brands.indexOf(episode.master_brand.mid>=0)) {
+	    var version = null;
+            if(config.master_brands.indexOf(episode.master_brand.mid)>=0) {
+		// find out if there is an available version
+                var av = episode.available_versions;
+                for(i=0; i<av.version.length; i++) {
+                    if(av.version[i].types.type!="Podcast") {
+			if(av.version[i].availabilities.availability[0].status == "available") {
+                            version = av.version[i];
+			}
+                    }
+                }
+	    }
+	    if(version != null) {
                 // if yes, get the brand and media information
-                console.log(episode);
                 var brand_pid = null;
                 for(var j=0; j<episode.ancestor_titles.length; j++) {
                     var at = episode.ancestor_titles[j];
@@ -160,19 +169,8 @@ exports.handler = (event, context, callback) => {
                 // get the brand record from nitro (to get the brand synopsis mostly)
                 bv_promises.push(nitrorequest({pid:brand_pid})); // TODO what if brand_pid is still null?
                 var version_pid = null;
-                var av = episode.available_versions;
-                if(av.version.length>1) {
-                    for(i=0; i<av.version.length; i++) {
-                        if(av.version[i].types.type!="Podcast") {
-                            version_pid = av.version[i].pid;
-                        }
-                    }
-                }
-                else {
-                    version_pid = av.version[0].pid;
-                }
                 // get the media assets from PIPS (to get the filenames)
-                bv_promises.push(pipsrequest(version_pid)); // TODO what if version_pid is still null?
+                bv_promises.push(pipsrequest(version.pid));
                 episodes.push(episode);
             }
             else {
