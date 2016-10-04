@@ -1,0 +1,3 @@
+www/auth.js
+lambda/*/node_modules/secret
+lambda/*/node_modules/secret/*
