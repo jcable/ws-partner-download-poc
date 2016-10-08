@@ -6,55 +6,70 @@ $(function () {
   };
   var region = 'eu-west-1';
   var identityPoolId = region+':3466c124-6320-43dd-b11e-a9b8295c0742';
+  var downloadBucket = 'ws-partner-download-poc-ms';
+  var signiantServer = 'eu-west-1-am.cloud.signiant.com';
+  var signiantKey = '';
+  var signiantStorageConfig = {};
 
-  function setsidebar(config) {
-    var master_brands, genres;
-    for(var i=0; i<config.Count; i++) {
-      var item = config.Items[i];
-      if(item.key.S == "master_brands") {
-          master_brands = item.value.M;
-      }
-      if(item.key.S == "genres") {
-          genres = item.value.SS.sort();
-      }
-    }
-    var children = [];
-    for(var j=0; j<genres.length; j++) {
-      children.push({ 'text' : genres[j]});
-    }
-    var data = [];
-    var mbs = Object.keys(master_brands).sort();
-    for(var i=0; i<mbs.length; i++) {
-	var key = mbs[i];
-        data.push({ 'id' : key, 'text' : master_brands[key].S, 'children' : children});
-    }
-    $('#sidebar').jstree({ 'core' : { 'data' : data }});
-  }
-  function main() {
-  var master_brand = "#";
   var cart = {}; // lang_genre : [array of objects]
+  var master_brand = "#";
   var genre = "#";
+  var brand_data = {};
 
-    // Credentials will be available when this function is called.
-    var accessKeyId = AWS.config.credentials.accessKeyId;
-    var secretAccessKey = AWS.config.credentials.secretAccessKey;
-    var sessionToken = AWS.config.credentials.sessionToken;
-
-
-  var dynamodb = new AWS.DynamoDB();
-  dynamodb.scan({TableName: 'ws-partner-download-poc-config'}, function (err, data) {
-    if (err) console.log(err, err.stack); // an error occurred
-    else setsidebar(data);
-  });
-$('#sidebar').on("changed.jstree", function (e, data) {
-  var grid = $("#content").data("JSGrid");
-  master_brand = data.node.parent;
-  genre = data.node.text;
-  if((master_brand != "#") && (genre != "#")) {
-    grid.loadData();
+  function setsidebar(master_brands, genres) {
+	var children = [];
+	for(var j=0; j<genres.length; j++) {
+		children.push({ 'text' : genres[j]});
+	}
+	var data = [];
+	var mbs = Object.keys(master_brands).sort();
+	for(var i=0; i<mbs.length; i++) {
+		var key = mbs[i];
+		data.push({ 'id' : key, 'text' : master_brands[key].S, 'children' : children});
+	}
+	$('#sidebar').jstree({ 'core' : { 'data' : data }});
+	$('#sidebar').on("changed.jstree", function (e, data) {
+		var grid = $("#content").data("JSGrid");
+		master_brand = data.node.parent;
+		genre = data.node.text;
+		if((master_brand != "#") && (genre != "#")) {
+			grid.loadData();
+		}
+	});
   }
-});
-    $("#content").jsGrid({
+
+  function main() {
+
+	checkForSigniant();
+
+	var dynamodb = new AWS.DynamoDB();
+	dynamodb.scan({TableName: 'ws-partner-download-poc-config'}, function (err, data) {
+		if (err) {
+			console.log(err, err.stack); // an error occurred
+		}
+		else {
+			var master_brands, genres;
+			for(var i=0; i<data.Count; i++) {
+				var item = data.Items[i];
+				switch(item.key.S) {
+				case "master_brands":
+					master_brands = item.value.M;
+					break;
+				case "genres":
+					genres = item.value.SS.sort();
+					break;
+				case "signiant_key":
+					signiantKey = item.value.S;
+					break;
+				case "brands":
+					brand_data = item.value.M;
+					break;
+				}
+			}
+			setsidebar(master_brands, genres);
+		}
+	});
+	$("#content").jsGrid({
         width: "100%",
         height: "400px",
  
@@ -83,9 +98,16 @@ $('#sidebar').on("changed.jstree", function (e, data) {
 			  var episode = prog.episode.M;
 			  var brand = prog.brand.M;
 			  var media = prog.media.M;
-			  var title = brand.title.S;
 			  var pid = episode.pid.S;
 		          var ck = cart.hasOwnProperty(pid);
+			  // set Brand column to brand title unless we have a brand override (so there is a column in English)
+			  var brand_title = brand.title.S;
+		          if(brand_data.hasOwnProperty(brand.pid.S)) {
+				var brand_override = brand_data[brand.pid.S].M;
+				brand_title = brand_override.title.S;
+			  }
+			  // set title column to presentation title or episode title or brand title
+			  var title = brand_title;
 			  if(episode.hasOwnProperty("title")) {
 			      title = episode.title.S;
 			  }
@@ -103,7 +125,7 @@ $('#sidebar').on("changed.jstree", function (e, data) {
 				"object": prog,
 				"pid": pid,
 				"Image": episode.images.M.image.M.template_url.S, 
-				"Brand":brand.title.S, 
+				"Brand":brand_title, 
 				"Title":title, 
 				"Description":synopsis,
 				"Download": ck
@@ -148,41 +170,60 @@ $('#sidebar').on("changed.jstree", function (e, data) {
               }, 
 		type: "checkbox", width: 20 }
         ]
-    });
-var footer = $("#footer");
-footer.append($("<input type='radio' checked='checked' name='fmt' value='wav'>wav</input>"));
-footer.append($("<input type='radio' name='fmt' value='low'>MP3 high</input>"));
-footer.append($("<input type='radio' name='fmt' value='high'>MP3 low</input>"));
-  var db = $("<button>Start Download</button>");
-  db.attr("type", "button");
-  db.on("click", function (event) {
-    var fmt = $("input[name=fmt]:checked").val();
-    var k = Object.keys(cart);
-    var assets = [];
-    for(var i=0; i<k.length; i++) {
-      var prog = cart[k[i]];
-      var versions = prog.episode.M.available_versions.M.version.L;
-      for(var j=0; j<versions.length; j++) {
-	var version = versions[j].M;
-	var pid = version.pid.S;
-	var av = version.availabilities.M.availability.L;
-	var type = version.types.M.type.L[0].S;
-	//console.log(pid+" "+type);
-	//console.log(av);
-      }
-      var filename = "";
-      var media = prog.media.L;
-      for(var l=0; l<media.length; l++) {
-	var mi = media[l].M;
-	if(mi.map_id.S == "piff_abr_low_audio") {
-	  filename = mi.map_id.S+"/"+mi.filename.S.split("/")[0];
-	}
-      }
-      assets.push(filename);
-    }
-    console.log(assets);
-  });
-  footer.append(db);
+	});
+	$("#header").html("Files available in the selected language/genre will appear here");
+	var footer = $("#footer");
+	footer.append($("<input type='radio' checked='checked' name='fmt' value='wav'>wav</input>"));
+	footer.append($("<input type='radio' name='fmt' value='low'>MP3 high</input>"));
+	footer.append($("<input type='radio' name='fmt' value='high'>MP3 low</input>"));
+	var db = $("<button>Start Download</button>");
+	db.attr("type", "button");
+	db.on("click", function (event) {
+		var fmt = $("input[name=fmt]:checked").val();
+		var k = Object.keys(cart);
+		var assets = [];
+		for(var i=0; i<k.length; i++) {
+			var prog = cart[k[i]];
+			var versions = prog.episode.M.available_versions.M.version.L;
+			for(var j=0; j<versions.length; j++) {
+				var version = versions[j].M;
+				var pid = version.pid.S;
+				var av = version.availabilities.M.availability.L;
+				var type = version.types.M.type.L[0].S;
+				//console.log(pid+" "+type);
+				//console.log(av);
+			}
+			var filename = "";
+			var media = prog.media.L;
+			for(var l=0; l<media.length; l++) {
+				var mi = media[l].M;
+				if(mi.map_id.S == "piff_abr_low_audio") {
+					filename = mi.map_id.S+"/"+mi.filename.S.split("/")[0];
+				}
+			}
+			assets.push(filename);
+		}
+		console.log(assets);
+		var apigClient = apigClientFactory.newClient();
+		console.log(apigClient);
+		apigClient.wsPartnerDownloadPocSigcredGet({}, {}, null)
+    			.then(function(result){
+				console.log(result);
+				downloadFiles(
+					['wudc.mp3'], 
+					result.api_key,
+					{
+						configId : result.config_id,
+						signature : result.token,
+						bucket : downloadBucket
+					},
+					signiantServer 
+				);
+    			}).catch( function(result){
+				console.log(result);
+    		});
+	});
+	footer.append(db);
   }
 // checking a file checks if we already know the download url and if not invokes a restful call to discover it, storing the promise in the cart entry
 // restful call invokes a lambda function which if the content is available returns the bucket addresses
@@ -257,4 +298,116 @@ footer.append($("<input type='radio' name='fmt' value='high'>MP3 low</input>"));
 		});
 	}
   }
+        
+    function checkForSigniant() {
+	console.log("Check for Signiant App");
+	Signiant.Mst.configure({
+            networkConnectivityErrorCallback: function(){
+		console.log("Network Connectivity Loss Detected");
+		alert("Network Loss Detected, Waiting for Restore");
+		},
+            appCommunicationErrorCallback: function(){
+		  console.log("Connection to Signiant App Lost");
+		  alert("Your connection has been lost. Press launch application on the next dialog.")
+		  reInitializeApp();
+		},
+            networkConnectivityRestoredCallback: function(){
+		  console.log("Network Connectivity Restored");
+		  alert("Network Connectivity Restored");
+		}
+	});
+          
+	detectPlugin({
+		success:function(){
+			console.log("Signiant plugin available");
+		},
+		error:function(){
+			alert("Signiant App Failed to load.");
+		}
+	});
+          
+    }
+      
+     /* Timeout is time to wait for app to respond to new session request.
+      * We suggest 20 seconds, but you may want to lower this.
+      * If the timer completes and no message is received, reInitializeFailure will fire 
+      */
+    function reInitializeApp() {
+	  console.log("Attempt Re Initialize Connection to Signiant");
+          Signiant.Mst.initialize(
+		function () {
+		  console.log("Connection to Signiant App Re-established");
+		  alert("Connection to Signiant App Re-established");
+		},
+		function () {
+		  console.log("Re-Initialize Signiant App Failed, retrying");
+		  alert("Signiant App Connection Lost, Retrying...");
+		  reInitializeApp();
+		},		
+          	{ "timeout" : 20000 }
+	);
+    }
+
+    function downloadFiles(fileNames, apiKey, storageConfig, defaultServer) {
+          //create a new download Object
+          var download = new Signiant.Mst.Download();
+          //set the download server
+          download.setServer(defaultServer);
+          //set the apikey for downloading
+          download.setApiKey(apiKey); //required
+          //set the storage configuration
+          download.setStorageConfig(JSON.stringify(storageConfig));
+          //set the probeLB (probe load balancer) to true (always true for Flight).
+          download.setProbeLB(true);
+          download.setFilePathHandlingMode(Signiant.Mst.Transfer.filePathModePath);
+          download.setFileCollisionHandlingMode(Signiant.Mst.Transfer.fileCollisionModeVersion);
+          //set the files to download to the file that is passed
+          download.setFilesToDownload(fileNames);
+          download.subscribeForTransferErrors(
+        	function (transferObject, eventCode, eventMsg, propertyName){
+			  console.log("Sample Upload Transfer Error " + eventCode + ", " + eventMsg);
+		}
+	  );
+	  download.subscribeForBasicEvents(
+		function ( transferObject, eventCode, eventMsg, eventData ) {
+		  console.log("Download Transfer Event " + eventCode + ", " + eventMsg);
+		  var message = eventMsg;			
+		  switch(eventCode) {
+		    case "TRANSFER_STARTED":
+		    break;
+
+		    case "TRANSFER_CANCEL_EVENT":
+		    case "TRANSFER_COMPLETED":
+		    case "TRANSFER_ERROR_EVENT":
+		      transferObject.clearAllFiles();
+		    break;
+
+		    default:
+		      return
+		  }
+		}
+	  );
+          download.subscribeForTransferProgress(
+		function (transferObject, numBytesSent, numBytesTotal, estimatedTimeRemaining) {
+		  var percent = Math.round((numBytesSent/numBytesTotal)*100);
+		  $("#progress").html(percent+"% completed.<p>Completes in about "+moment.duration(estimatedTimeRemaining*1000).humanize()+"</p>");
+		}
+	  );
+
+          //open the file picker so the user selects where to save the file.
+          download.chooseDownloadFolder(
+		function(message, folder) {
+		    //set the download folder to what they set
+		    download.setDownloadFolder(folder);
+		    //double check that we actually set the files 
+		    selectedFiles = download.getFiles(); 
+		    if (selectedFiles.length == 0)
+		      alert("No files Selected for Download");
+		    else{
+		      //do the download
+		      download.startDownload();
+		    }
+		}
+	  );
+    }
 });
