@@ -1,3 +1,4 @@
-www/auth.js
-lambda/*/node_modules/secret
-lambda/*/node_modules/secret/*
+lambda/*/node_modules
+lambda/*/node_modules/*
+www/js/lib
+www/js/lib/*
