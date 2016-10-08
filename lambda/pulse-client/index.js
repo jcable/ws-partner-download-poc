@@ -28,42 +28,6 @@ function putGenres(genres) {
     });
 }
 
-function pipsrequest(version) {
-    var options = {
-        key:   secrets.key,  // Secret client key
-        cert:  secrets.cert,  // Public client key
-        rejectUnauthorized: false, // Used for self signed server
-        host: "api.live.bbc.co.uk",
-        path: "/pips/api/v1/version/pid."+version+"/media_assets/?format=json"
-    };
-    return new Promise(function(resolve,reject){
-        https.get(options, function(res) {
-            var data = '';
-            res.on('data', (chunk) => {
-              data += chunk;
-            });
-            res.on('end', () => {
-                var ma = JSON.parse(data);
-                var r = [];
-                for(var i=0; i<ma[0].length; i++) {
-                    if(ma[0][i][0]=="media_asset") {
-                        var a = ma[0][i];
-                        var m = {};
-                        for(var j=2; j<a.length; j++) {
-                            if(a[j][0] == "media_asset_profile") { var map = a[j][1]; m["map_id"] = map.map_id; }
-                            if(a[j][0] == "filename") { m["filename"] = a[j][2]; }
-                        }
-                        r.push(m);
-                    }
-                }
-                resolve(r);
-            });
-        }).on('error', function(e) {
-            reject(e);
-        });
-    });
-}
-
 function nitrorequest(params) {
     var qs = "pid="+params.pid;
     if(params.hasOwnProperty("pulse_reference")) {
@@ -91,7 +55,7 @@ function nitrorequest(params) {
     });
 }
 
-function putEpisode(episode, genre, brand, media) {
+function putEpisode(episode, genre, brand) {
     var params = {
         TableName:"ws-partner-download-poc-prog",
         Item:{
@@ -99,8 +63,7 @@ function putEpisode(episode, genre, brand, media) {
           "pid": episode.pid, // primary sort key
           "Genre": genre, // additional sort key
           "episode": episode,
-          "brand": brand,
-          "media": media
+          "brand": brand
         }
     };
     docClient.put(params, function(err, data) {
@@ -158,7 +121,7 @@ exports.handler = (event, context, callback) => {
                 }
 	    }
 	    if(version != null) {
-                // if yes, get the brand and media information
+                // if yes, get the brand information
                 var brand_pid = null;
                 for(var j=0; j<episode.ancestor_titles.length; j++) {
                     var at = episode.ancestor_titles[j];
@@ -168,9 +131,6 @@ exports.handler = (event, context, callback) => {
                 }
                 // get the brand record from nitro (to get the brand synopsis mostly)
                 bv_promises.push(nitrorequest({pid:brand_pid})); // TODO what if brand_pid is still null?
-                var version_pid = null;
-                // get the media assets from PIPS (to get the filenames)
-                bv_promises.push(pipsrequest(version.pid));
                 episodes.push(episode);
             }
             else {
@@ -184,9 +144,8 @@ exports.handler = (event, context, callback) => {
             for(var i=0; i<episodes.length; i++) {
                 var episode = episodes[i];
                 var brand = bv.shift();
-                var media = bv.shift();
                 var genre = episode.genre_groupings.genre_group[0].genres.genre[0].$;
-                putEpisode(episode, genre, brand, media);
+                putEpisode(episode, genre, brand);
                 if(genres.indexOf(genre)==-1){
                    genres.push(genre);
                    new_genres = true;
