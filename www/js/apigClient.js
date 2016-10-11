@@ -86,13 +86,13 @@ apigClientFactory.newClient = function (config) {
     apigClient.filenameGet = function (params, body, additionalParams) {
         if(additionalParams === undefined) { additionalParams = {}; }
         
-        apiGateway.core.utils.assertParametersDefined(params, [], ['body']);
+        apiGateway.core.utils.assertParametersDefined(params, ['quality', 'genre', 'master_brand', 'pid'], ['body']);
         
         var filenameGetRequest = {
             verb: 'get'.toUpperCase(),
             path: pathComponent + uritemplate('/filename').expand(apiGateway.core.utils.parseParametersToObject(params, [])),
             headers: apiGateway.core.utils.parseParametersToObject(params, []),
-            queryParams: apiGateway.core.utils.parseParametersToObject(params, []),
+            queryParams: apiGateway.core.utils.parseParametersToObject(params, ['quality', 'genre', 'master_brand', 'pid']),
             body: body
         };
         
@@ -119,6 +119,24 @@ apigClientFactory.newClient = function (config) {
     };
     
     
+    apigClient.filenameOptions = function (params, body, additionalParams) {
+        if(additionalParams === undefined) { additionalParams = {}; }
+        
+        apiGateway.core.utils.assertParametersDefined(params, [], ['body']);
+        
+        var filenameOptionsRequest = {
+            verb: 'options'.toUpperCase(),
+            path: pathComponent + uritemplate('/filename').expand(apiGateway.core.utils.parseParametersToObject(params, [])),
+            headers: apiGateway.core.utils.parseParametersToObject(params, []),
+            queryParams: apiGateway.core.utils.parseParametersToObject(params, []),
+            body: body
+        };
+        
+        
+        return apiGatewayClient.makeRequest(filenameOptionsRequest, authType, additionalParams, config.apiKey);
+    };
+    
+    
     apigClient.wsPartnerDownloadPocCopyPost = function (params, body, additionalParams) {
         if(additionalParams === undefined) { additionalParams = {}; }
         
@@ -134,6 +152,24 @@ apigClientFactory.newClient = function (config) {
         
         
         return apiGatewayClient.makeRequest(wsPartnerDownloadPocCopyPostRequest, authType, additionalParams, config.apiKey);
+    };
+    
+    
+    apigClient.wsPartnerDownloadPocCopyOptions = function (params, body, additionalParams) {
+        if(additionalParams === undefined) { additionalParams = {}; }
+        
+        apiGateway.core.utils.assertParametersDefined(params, [], ['body']);
+        
+        var wsPartnerDownloadPocCopyOptionsRequest = {
+            verb: 'options'.toUpperCase(),
+            path: pathComponent + uritemplate('/ws-partner-download-poc-copy').expand(apiGateway.core.utils.parseParametersToObject(params, [])),
+            headers: apiGateway.core.utils.parseParametersToObject(params, []),
+            queryParams: apiGateway.core.utils.parseParametersToObject(params, []),
+            body: body
+        };
+        
+        
+        return apiGatewayClient.makeRequest(wsPartnerDownloadPocCopyOptionsRequest, authType, additionalParams, config.apiKey);
     };
     
     
@@ -170,6 +206,24 @@ apigClientFactory.newClient = function (config) {
         
         
         return apiGatewayClient.makeRequest(wsPartnerDownloadPocSigcredPostRequest, authType, additionalParams, config.apiKey);
+    };
+    
+    
+    apigClient.wsPartnerDownloadPocSigcredOptions = function (params, body, additionalParams) {
+        if(additionalParams === undefined) { additionalParams = {}; }
+        
+        apiGateway.core.utils.assertParametersDefined(params, [], ['body']);
+        
+        var wsPartnerDownloadPocSigcredOptionsRequest = {
+            verb: 'options'.toUpperCase(),
+            path: pathComponent + uritemplate('/ws-partner-download-poc-sigcred').expand(apiGateway.core.utils.parseParametersToObject(params, [])),
+            headers: apiGateway.core.utils.parseParametersToObject(params, []),
+            queryParams: apiGateway.core.utils.parseParametersToObject(params, []),
+            body: body
+        };
+        
+        
+        return apiGatewayClient.makeRequest(wsPartnerDownloadPocSigcredOptionsRequest, authType, additionalParams, config.apiKey);
     };
     
 
