@@ -31,15 +31,19 @@ function putGenres(genres) {
 function nitrorequest(params) {
     var qs = "pid="+params.pid;
     if(params.hasOwnProperty("pulse_reference")) {
-        qs += "&pulse_reference="+params.pulse_reference // TODO - use the pulse reference
+        qs += "&pulse_reference="+params.pulse_reference
+    }
+    if(params.hasOwnProperty("partner_pid")) {
+        qs += "&partner_pid="+params.partner_pid;
     }
     var options = {
-        host: "nitro.api.bbci.co.uk",
+        host: "programmes.api.bbc.com",
         path: "/nitro/api/programmes?api_key="+secrets.api_key+"&mixin=available_versions&mixin=images&mixin=ancestor_titles&mixin=genre_groupings&"+qs,
         headers: {
             accept: 'application/json'
         }
     };
+    console.log(options.path);
     return new Promise(function(resolve,reject){
         http.get(options, function(res) {
             var data = '';
@@ -50,6 +54,7 @@ function nitrorequest(params) {
                 resolve(JSON.parse(data).nitro.results.items[0]);
             });
         }).on('error', function(e) {
+            console.log(e);
             reject(e);
         });
     });
@@ -81,7 +86,11 @@ exports.handler = (event, context, callback) => {
     for(var i=0; i<event.Records.length; i++) {
         var ms = event.Records[i].Sns.Message;
         var m = JSON.parse(ms);
-        if(m.type == 'episode') {
+        var partner_pid = "s0000001";
+        if(m.query_string.hasOwnProperty("partner_pid")) {
+            partner_pid = m.query_string.partner_pid;
+        }
+        if((m.type == 'episode') && (partner_pid=="s0000001")) {
             promises.push(nitrorequest(m.query_string));
         }
     }
@@ -108,15 +117,15 @@ exports.handler = (event, context, callback) => {
         for(var i=0; i<values.length; i++) {
             var episode = values[i];
             // for each new availability check if it is associated with one of our master brands
-	    var version = null;
+	        var version = null;
             if(config.master_brands.indexOf(episode.master_brand.mid)>=0) {
-		// find out if there is an available version
+		        // find out if there is an available version
                 var av = episode.available_versions;
                 for(i=0; i<av.version.length; i++) {
                     if(av.version[i].types.type!="Podcast") {
-			if(av.version[i].availabilities.availability[0].status == "available") {
+			            if(av.version[i].availabilities.availability[0].status == "available") {
                             version = av.version[i];
-			}
+			            }
                     }
                 }
 	    }
