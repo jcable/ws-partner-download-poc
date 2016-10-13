@@ -43,6 +43,45 @@ $(function() {
         return null;
     }
 
+    function buildRow(prog) {
+	var brand = prog.brand.M;
+	var episode = prog.episode.M;
+	var pid = episode.pid.S;
+	var ck = cart.hasOwnProperty(pid);
+	// set Brand column to brand title unless we have a brand override (so there is a column in English)
+	var brand_title = brand.title.S;
+	if (brand_data.hasOwnProperty(brand.pid.S)) {
+	    var brand_override = brand_data[brand.pid.S].M;
+	    brand_title = brand_override.title.S;
+	}
+	// set title column to presentation title or episode title or brand title
+	var title = brand_title;
+	if (episode.hasOwnProperty("title")) {
+	    title = episode.title.S;
+	} else if (episode.hasOwnProperty("presentation_title")) {
+	    title = episode.presentation_title.S;
+	}
+	var synopsis = brand.synopses.M.short.S.trim();
+	if (episode.hasOwnProperty("synopses")) {
+	    var esynopsis = episode.synopses.M.short.S.trim();
+	    if (esynopsis != synopsis) {
+		synopsis = synopsis + " - " + esynopsis;
+	    }
+	}
+	prog.brand_title = brand_title; // for building the filename
+	prog.episode_title = title; // for building the filename
+	return {
+	    object: prog,
+	    pid: pid,
+	    vpid: prog.version.pid.S,
+	    Image: episode.images.M.image.M.template_url.S,
+	    Brand: brand_title,
+	    Title: title,
+	    Description: synopsis,
+	    Download: ck
+	};
+    }
+
     function sanitise(s) {
         return s.replace(/[^A-Za-z0-9 ]/g, '_')
     }
@@ -130,7 +169,7 @@ $(function() {
         });
     }
 
-    function main() {
+    function main(userName) { // TODO use userName for logging downloads
 
         checkForSigniant();
 
@@ -140,7 +179,6 @@ $(function() {
             secretKey: AWS.config.credentials.secretAccessKey,
             sessionToken: AWS.config.credentials.sessionToken
         });
-        console.log(apigClient);
 
         var dynamodb = new AWS.DynamoDB();
         dynamodb.scan({
@@ -206,44 +244,10 @@ $(function() {
                                 var r = [];
                                 for (var i = 0; i < data.Count; i++) {
                                     var prog = data.Items[i];
-                                    var episode = prog.episode.M;
-                                    var version = getVersion(episode);
-                                    if (version) {
-                                        prog.version = version;
-                                        var brand = prog.brand.M;
-                                        var pid = episode.pid.S;
-                                        var ck = cart.hasOwnProperty(pid);
-                                        // set Brand column to brand title unless we have a brand override (so there is a column in English)
-                                        var brand_title = brand.title.S;
-                                        if (brand_data.hasOwnProperty(brand.pid.S)) {
-                                            var brand_override = brand_data[brand.pid.S].M;
-                                            brand_title = brand_override.title.S;
-                                        }
-                                        // set title column to presentation title or episode title or brand title
-                                        var title = brand_title;
-                                        if (episode.hasOwnProperty("title")) {
-                                            title = episode.title.S;
-                                        } else if (episode.hasOwnProperty("presentation_title")) {
-                                            title = episode.presentation_title.S;
-                                        }
-                                        var synopsis = brand.synopses.M.short.S.trim();
-                                        if (episode.hasOwnProperty("synopses")) {
-                                            var esynopsis = episode.synopses.M.short.S.trim();
-                                            if (esynopsis != synopsis) {
-                                                synopsis = synopsis + " - " + esynopsis;
-                                            }
-                                        }
-                                        prog.brand_title = brand_title; // for building the filename
-                                        prog.episode_title = title; // for building the filename
-                                        r.push({
-                                            "object": prog,
-                                            "pid": pid,
-                                            "Image": episode.images.M.image.M.template_url.S,
-                                            "Brand": brand_title,
-                                            "Title": title,
-                                            "Description": synopsis,
-                                            "Download": ck
-                                        });
+				    var version = getVersion(prog.episode.M);
+				    if (version) {
+					prog.version = version;
+					r.push(buildRow(prog));
                                     }
                                 }
                                 d.resolve(r);
@@ -256,10 +260,11 @@ $(function() {
             fields: [{
                 name: "Image",
                 itemTemplate: function(val, item) {
-                    return $("<img>").attr("src", "https://" + val.replace("$recipe", "480x270")).css({
-                            height: 50
-                        })
-                        .wrap("<a href='http://bbc.co.uk/programmes/" + item.pid + "'></a>");
+		    var play_url = "http://open.live.bbc.co.uk/mediaselector/5/redir/version/2.0/mediaset/audio-syndication/proto/http/vpid/"+item.vpid;
+		    var player = $("<audio/>").attr({"controls":"controls","src":play_url}).css({width: 90});
+		    var img_url = "https://" + val.replace("$recipe", "480x270");
+                    var img = $("<img/>").attr("src", img_url).css({ height: 50 });
+                    return $("<span/>").append(img).append(player);
                 },
                 type: "text",
                 width: 30
@@ -342,7 +347,7 @@ $(function() {
         footer.append(db);
     }
 
-    function setup(session) {
+    function setup(session, userName) {
         var upId = poolData.UserPoolId;
         var upRegion = upId.split('_')[0];
         var logins = {};
@@ -353,7 +358,7 @@ $(function() {
             Logins: logins
         });
         AWS.config.credentials.get(function() {
-            main();
+            main(userName);
         });
     }
 
@@ -396,20 +401,30 @@ $(function() {
     if (cognitoUser == null) {
         $("<input type='button' value='Click to log in'/>").on("click", login).appendTo("#login");
     } else {
+        var userName = cognitoUser.getUsername();
         if (false) { // might need this if session expired - also might need to use a refresh token in that case.
-            var userName = cognitoUser.getUsername();
             var password = prompt('password', '');
             login2({
                 Username: userName,
                 Password: password
             });
         } else {
-            $("<input/>").attr({
-                type: 'button',
-                value: 'log out from ' + cognitoUser.getUsername()
-            }).on("click", logout).appendTo("#login");
             cognitoUser.getSession(function(err, session) {
-                setup(session);
+		cognitoUser.getUserAttributes(function(err, userAttributes) {
+		    if (err) {
+			alert(err);
+			return;
+		    }
+		    userAttributes.forEach(function(att) {
+			if(att.Name == "name") {
+		          $("<input/>").attr({
+			    type: 'button',
+			    value: 'log out from account ' + att.Value 
+		          }).on("click", logout).appendTo("#login");
+			}
+		    });
+		});
+                setup(session, userName);
             });
         }
     }
@@ -419,16 +434,16 @@ $(function() {
         Signiant.Mst.configure({
             networkConnectivityErrorCallback: function() {
                 console.log("Network Connectivity Loss Detected");
-                alert("Network Loss Detected, Waiting for Restore");
+                //alert("Network Loss Detected, Waiting for Restore");
             },
             appCommunicationErrorCallback: function() {
                 console.log("Connection to Signiant App Lost");
-                alert("Your connection has been lost. Press launch application on the next dialog.")
+                //alert("Your connection has been lost. Press launch application on the next dialog.")
                 reInitializeApp();
             },
             networkConnectivityRestoredCallback: function() {
                 console.log("Network Connectivity Restored");
-                alert("Network Connectivity Restored");
+                //alert("Network Connectivity Restored");
             }
         });
 
@@ -452,11 +467,11 @@ $(function() {
         Signiant.Mst.initialize(
             function() {
                 console.log("Connection to Signiant App Re-established");
-                alert("Connection to Signiant App Re-established");
+                //alert("Connection to Signiant App Re-established");
             },
             function() {
                 console.log("Re-Initialize Signiant App Failed, retrying");
-                alert("Signiant App Connection Lost, Retrying...");
+                //alert("Signiant App Connection Lost, Retrying...");
                 reInitializeApp();
             }, {
                 "timeout": 20000
