@@ -11,11 +11,15 @@ $(function() {
     var signiantKey = '';
     var signiantStorageConfig = {};
 
-    var cart = {}; // array of promises for filenames, keyed on episode pid
+    var cart = new Map() // array of promises for filenames, keyed on episode pid concatenated with quality using _
     var master_brand = "#";
     var genre = "#";
     var brand_data = {};
+    var files_not_ready = 0;
 
+    function logToUser(text) {
+        $("#status").append("<p>" + text + "</p>");
+    }
 
     function getVersion(episode) {
         var versions = episode.available_versions.M.version.L;
@@ -44,42 +48,52 @@ $(function() {
     }
 
     function buildRow(prog) {
-	var brand = prog.brand.M;
-	var episode = prog.episode.M;
-	var pid = episode.pid.S;
-	var ck = cart.hasOwnProperty(pid);
-	// set Brand column to brand title unless we have a brand override (so there is a column in English)
-	var brand_title = brand.title.S;
-	if (brand_data.hasOwnProperty(brand.pid.S)) {
-	    var brand_override = brand_data[brand.pid.S].M;
-	    brand_title = brand_override.title.S;
-	}
-	// set title column to presentation title or episode title or brand title
-	var title = brand_title;
-	if (episode.hasOwnProperty("title")) {
-	    title = episode.title.S;
-	} else if (episode.hasOwnProperty("presentation_title")) {
-	    title = episode.presentation_title.S;
-	}
-	var synopsis = brand.synopses.M.short.S.trim();
-	if (episode.hasOwnProperty("synopses")) {
-	    var esynopsis = episode.synopses.M.short.S.trim();
-	    if (esynopsis != synopsis) {
-		synopsis = synopsis + " - " + esynopsis;
-	    }
-	}
-	prog.brand_title = brand_title; // for building the filename
-	prog.episode_title = title; // for building the filename
-	return {
-	    object: prog,
-	    pid: pid,
-	    vpid: prog.version.pid.S,
-	    Image: episode.images.M.image.M.template_url.S,
-	    Brand: brand_title,
-	    Title: title,
-	    Description: synopsis,
-	    Download: ck
-	};
+        var brand = prog.brand.M;
+        var episode = prog.episode.M;
+        var pid = episode.pid.S;
+        var ck = {
+            best: false,
+            high: false,
+            low: false
+        };
+        cart.forEach(function(val, key) {
+            var q = key.split('_');
+            if (q[0] == pid) {
+                ck[q[1]] = true;
+            }
+        });
+        // set Brand column to brand title unless we have a brand override (so there is a column in English)
+        var brand_title = brand.title.S;
+        if (brand_data.hasOwnProperty(brand.pid.S)) {
+            var brand_override = brand_data[brand.pid.S].M;
+            brand_title = brand_override.title.S;
+        }
+        // set title column to presentation title or episode title or brand title
+        var title = brand_title;
+        if (episode.hasOwnProperty("title")) {
+            title = episode.title.S;
+        } else if (episode.hasOwnProperty("presentation_title")) {
+            title = episode.presentation_title.S;
+        }
+        var synopsis = brand.synopses.M.short.S.trim();
+        if (episode.hasOwnProperty("synopses")) {
+            var esynopsis = episode.synopses.M.short.S.trim();
+            if (esynopsis != synopsis) {
+                synopsis = synopsis + " - " + esynopsis;
+            }
+        }
+        prog.brand_title = brand_title; // for building the filename
+        prog.episode_title = title; // for building the filename
+        return {
+            object: prog,
+            pid: pid,
+            vpid: prog.version.pid.S,
+            Image: episode.images.M.image.M.template_url.S,
+            Brand: brand_title,
+            Title: title,
+            Description: synopsis,
+            Download: ck
+        };
     }
 
     function sanitise(s) {
@@ -103,6 +117,7 @@ $(function() {
         return s3.headObject(params).promise().then(
             function(data) {
                 // the file exists so resolve immediately
+                logToUser("existing file " + filename);
                 return Promise.resolve(filename);
             },
             function(err) {
@@ -115,6 +130,7 @@ $(function() {
                         quality: quality
                     })
                 };
+                files_not_ready++;
                 return sqs.sendMessage(qp).promise().then(
                     function(data) {
                         return new Promise(function(resolve, reject) {
@@ -124,6 +140,8 @@ $(function() {
                                     return reject(err);
                                 } else {
                                     console.log(data); // successful response
+                                    files_not_ready--
+                                    logToUser("Available " + filename);
                                     return resolve(filename);
                                 }
                             });
@@ -244,10 +262,10 @@ $(function() {
                                 var r = [];
                                 for (var i = 0; i < data.Count; i++) {
                                     var prog = data.Items[i];
-				    var version = getVersion(prog.episode.M);
-				    if (version) {
-					prog.version = version;
-					r.push(buildRow(prog));
+                                    var version = getVersion(prog.episode.M);
+                                    if (version) {
+                                        prog.version = version;
+                                        r.push(buildRow(prog));
                                     }
                                 }
                                 d.resolve(r);
@@ -260,10 +278,17 @@ $(function() {
             fields: [{
                 name: "Image",
                 itemTemplate: function(val, item) {
-		    var play_url = "http://open.live.bbc.co.uk/mediaselector/5/redir/version/2.0/mediaset/audio-syndication/proto/http/vpid/"+item.vpid;
-		    var player = $("<audio/>").attr({"controls":"controls","src":play_url}).css({width: 90});
-		    var img_url = "https://" + val.replace("$recipe", "480x270");
-                    var img = $("<img/>").attr("src", img_url).css({ height: 50 });
+                    var play_url = "http://open.live.bbc.co.uk/mediaselector/5/redir/version/2.0/mediaset/audio-syndication/proto/http/vpid/" + item.vpid;
+                    var player = $("<audio/>").attr({
+                        "controls": "controls",
+                        "src": play_url
+                    }).css({
+                        width: 90
+                    });
+                    var img_url = "https://" + val.replace("$recipe", "480x270");
+                    var img = $("<img/>").attr("src", img_url).css({
+                        height: 50
+                    });
                     return $("<span/>").append(img).append(player);
                 },
                 type: "text",
@@ -283,45 +308,52 @@ $(function() {
             }, {
                 name: "Download",
                 itemTemplate: function(val, item) {
-                    var at = {
-                        type: "checkbox",
-                        id: item.pid
-                    };
-                    if (val) {
-                        at['checked'] = 'checked';
-                    }
-                    var ip = $("<input>").attr(at).data("prog", item.object);
-                    ip.on("click", function(event) {
-                        if (this.checked) {
-                            var quality = $("input[name=quality]:checked").val();
-                            var prog = $(this).data("prog");
-                            // store the promise in the cart
-                            cart[this.id] = getFilename(prog, quality);
-                        } else {
-                            delete cart[this.id];
+                    // why not colour the boxes as to the existance of the file?
+                    var buildCB = function(quality, checked) {
+                        var at = {
+                            type: "checkbox",
+                            id: item.pid + "_" + quality
+                        };
+                        if (checked) {
+                            at['checked'] = 'checked';
                         }
-                    });
-                    return ip;
+                        var ip = $("<input>").attr(at).data("prog", item.object);
+                        ip.on("click", function(event) {
+                            if (this.checked) {
+                                var q = this.id.split('_');
+                                var pid = q[0];
+                                var quality = q[1];
+                                var prog = $(this).data("prog");
+                                // store the promise in the cart
+                                cart.set(this.id, getFilename(prog, quality));
+                            } else {
+                                cart.delete(this.id);
+                            }
+                        });
+                        return ip;
+                    };
+                    return $("<div/>")
+                        .append(buildCB("best", val.best)).append(" Wav<br/>")
+                        .append(buildCB("high", val.high)).append(" High<br/>")
+                        .append(buildCB("low", val.low)).append(" Low<br/>");
                 },
                 type: "checkbox",
-                width: 20
+                width: 40
             }]
         });
         $("#header").html("Files available in the selected language/genre will appear here");
         var footer = $("#footer");
-        footer.append($("<input type='radio' checked='checked' name='quality' value='best'>wav</input>"));
-        footer.append($("<input type='radio' name='quality' value='high'>MP3 high</input>"));
-        footer.append($("<input type='radio' name='quality' value='low'>MP3 low</input>"));
         var db = $("<button>Start Download</button>");
         db.attr("type", "button");
         db.on("click", function(event) {
-            var k = Object.keys(cart);
             var assets = [];
-            for (var i = 0; i < k.length; i++) {
-                assets.push(cart[k[i]]);
-            }
+            cart.forEach(function(val) {
+                assets.push(val);
+            });
+            logToUser("Preparing " + assets.length + " files for download ...");
             Promise.all(assets).then(
                 function(files) {
+		    //$("#progress").html("Downloading "+file.length+" files");
                     apigClient.wsPartnerDownloadPocSigcredGet({}).then(
                         function(result) {
                             downloadFiles(
@@ -410,20 +442,20 @@ $(function() {
             });
         } else {
             cognitoUser.getSession(function(err, session) {
-		cognitoUser.getUserAttributes(function(err, userAttributes) {
-		    if (err) {
-			alert(err);
-			return;
-		    }
-		    userAttributes.forEach(function(att) {
-			if(att.Name == "name") {
-		          $("<input/>").attr({
-			    type: 'button',
-			    value: 'log out from account ' + att.Value 
-		          }).on("click", logout).appendTo("#login");
-			}
-		    });
-		});
+                cognitoUser.getUserAttributes(function(err, userAttributes) {
+                    if (err) {
+                        alert(err);
+                        return;
+                    }
+                    userAttributes.forEach(function(att) {
+                        if (att.Name == "name") {
+                            $("<input/>").attr({
+                                type: 'button',
+                                value: 'log out from account ' + att.Value
+                            }).on("click", logout).appendTo("#login");
+                        }
+                    });
+                });
                 setup(session, userName);
             });
         }
@@ -505,6 +537,7 @@ $(function() {
                 var message = eventMsg;
                 switch (eventCode) {
                     case "TRANSFER_STARTED":
+			$("#progress").html("Starting download");
                         break;
 
                     case "TRANSFER_CANCEL_EVENT":
