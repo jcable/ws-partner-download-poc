@@ -44,7 +44,7 @@ function nitrorequest(params) {
             accept: 'application/json'
         }
     };
-    console.log("nitro request "+options.path);
+    //console.log("nitro request "+options.path);
     return new Promise(function(resolve,reject){
         http.get(options, function(res) {
             var data = '';
@@ -52,13 +52,21 @@ function nitrorequest(params) {
               data += chunk;
             });
             res.on('end', () => {
-                var results = JSON.parse(data).nitro.results;
-                if(results.total == 1) {
-                    resolve(results.items[0]);
+                //console.log('nitro response '+data);
+                var json = JSON.parse(data);
+                if(json.nitro) {
+                    var results = json.nitro.results;
+                    if(results.total == 1) {
+                        resolve(results.items[0]);
+                    }
+                    else {
+                        console.log("not available");
+                        console.log(data);
+                        resolve(null);
+                    }
                 }
                 else {
-                    console.log("not available");
-                    console.log(data);
+                    console.log('no data');
                     resolve(null);
                 }
             });
@@ -128,8 +136,6 @@ function processEpisode(episodes, bv_promises, config, episode)
 */
 function processWantedClip(clip)
 {
-    processWantedClipToValidQueue(clip, process.env.QUEUE);
-    processWantedClipToValidQueue(clip, process.env.TEST_QUEUE);
     var v = clip.available_versions.version[0];
     var media_set = v.availabilities.availability[0].media_sets.media_set;
     var have_mp3 = false;
@@ -138,7 +144,7 @@ function processWantedClip(clip)
         if(media_set[i].name == 'ws-clip-syndication-audio') {
             have_mp3 = true;
         }
-        if(media_set[i].name == 'mobile-tablet-main') {
+        if(media_set[i].name == 'audio-syndication-dash') {
             have_aac = true;
         }
     }
@@ -196,40 +202,30 @@ function processIdentifiedClip(item) {
         var status = v.availabilities.availability[0].status;
         console.log("clip "+item.pid+" version "+v.pid+" availability: "+status);
         if(status == "available") {
-            console.log("wanted clip");
+            console.log("available clip");
             processWantedClip(item);
         }
         else {
-            console.log("unwanted clip");
+            console.log("unavailable clip");
+            console.log(item);
         }
+    }
+    else {
+        console.log("unavailable clip");
+        console.log(item);
     }
 }
 
 function processAudioClip(item) {
-    console.log("clip");
     if(item.hasOwnProperty("clip_of")) {
-        console.log("clip of "+item.clip_of.pid);
         if(process.env.CLIP_BRANDS.includes(item.clip_of.pid)) {
             processIdentifiedClip(item);
         }        
-        else {
-            console.log("unwanted clip of "+item.clip_of.pid);
-        }
-    }
-    else if(process.env.TITLE.toUpperCase().includes(item.title.trim().toUpperCase())) {
-        console.log("clip title match");
-        fixClip(item);
-        processIdentifiedClip(item);
-    }
-    else {
-        console.log("unwanted clip");
     }
 }
 
 function processWantedItem(item)
 {
-    processWantedItemToValidQueue(item, process.env.QUEUE);
-    processWantedItemToValidQueue(item, process.env.TEST_QUEUE);
     var v = item.available_versions.version[0];
     var media_set = v.availabilities.availability[0].media_sets.media_set;
     var have_mp3 = false;
@@ -238,7 +234,10 @@ function processWantedItem(item)
         if(media_set[i].name == 'ws-clip-syndication-audio') {
             have_mp3 = true;
         }
-        if(media_set[i].name == 'mobile-tablet-main') {
+        if(media_set[i].name == 'audio-nondrm-download') {
+            have_mp3 = true;
+        }
+        if(media_set[i].name == 'audio-syndication-dash') {
             have_aac = true;
         }
     }
@@ -284,11 +283,11 @@ function processIdentifiedEpisode(item) {
         var status = v.availabilities.availability[0].status;
         console.log("episode "+item.pid+" version "+v.pid+" availability: "+status);
         if(status == "available") {
-            console.log("wanted episode");
+            console.log("available episode "+item.pid+" version "+v.pid);
             processWantedItem(item);
         }
         else {
-            console.log("unwanted episode");
+            console.log("unwanted episode "+item.pid+" is not available");
         }
     }
 }
@@ -296,12 +295,12 @@ function processIdentifiedEpisode(item) {
 function processAudioEpisode(item) {
     console.log("episode");
     if(item.hasOwnProperty("episode_of")) {
-        console.log("episode of "+item.episode_of.pid);
+        //console.log("episode of "+item.episode_of.pid);
         if(process.env.EPISODE_BRANDS.includes(item.episode_of.pid)) {
             processIdentifiedEpisode(item);
         }        
         else {
-            console.log("unwanted episode "+item.clip_of.pid);
+            console.log("unwanted episode "+item.pid+" of "+item.episode_of.pid);
         }
     }
     else {
