@@ -138,15 +138,23 @@ function processWantedClip(clip)
 {
     var v = clip.available_versions.version[0];
     var media_set = v.availabilities.availability[0].media_sets.media_set;
+    var have_mp4 = false;
     var have_mp3 = false;
     var have_aac = false;
     for(var i=0; i<media_set.length; i++) {
+        if(media_set[i].name == 'TBD') {
+            have_mp4 = true;
+        }
         if(media_set[i].name == 'ws-clip-syndication-audio') {
             have_mp3 = true;
         }
         if(media_set[i].name == 'audio-syndication-dash') {
             have_aac = true;
         }
+    }
+    if(have_mp4) {
+        processWantedClipToValidQueue(clip, process.env.LIVE_VIDEO_QUEUE);
+        processWantedClipToValidQueue(clip, process.env.TEST_VIDEO_QUEUE);
     }
     if(have_mp3) {
         processWantedClipToValidQueue(clip, process.env.LIVE_MP3_QUEUE);
@@ -219,6 +227,14 @@ function processIdentifiedClip(item) {
 function processAudioClip(item) {
     if(item.hasOwnProperty("clip_of")) {
         if(process.env.CLIP_BRANDS.includes(item.clip_of.pid)) {
+            processIdentifiedClip(item);
+        }        
+    }
+}
+
+function processVideoClip(item) {
+    if(item.hasOwnProperty("clip_of")) {
+        if(process.env.VIDEO_CLIP_BRANDS.includes(item.clip_of.pid)) {
             processIdentifiedClip(item);
         }        
     }
@@ -349,8 +365,13 @@ exports.handler = (event, context, callback) => {
                 if(item_type == "episode") {
                     processAudioEpisode(item);
                 }
-                else if((item_type == "clip") && (item.media_type == "Audio")) {
-                    processAudioClip(item);
+                else if(item_type == "clip") {
+                    if(item.media_type == "Audio") {
+                        processAudioClip(item);
+                    }
+                    else {
+                        processVideoClip(item);
+                    }
                 }
             }
         }
